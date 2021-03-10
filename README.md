@@ -12,7 +12,7 @@ We appreciate your patience!
 ## Cite this work! :)
 If you use this code or any of its modules, please cite us on your paper!
 
-<code>
+```
 @ARTICLE{9371720,
   author={A. {Pardo} and S. S. {Streeter} and B. W. {Maloney} and J. A. {Gutiérrez-Gutiérrez} and D. M. {McClatchy} and W. A. {Wells} and K. D. {Paulsen} and J. M. {López-Higuera} and B. W. {Pogue} and O. M. {Conde}},
   journal={IEEE Transactions on Medical Imaging}, 
@@ -22,7 +22,7 @@ If you use this code or any of its modules, please cite us on your paper!
   number={},
   pages={1-1},
   doi={10.1109/TMI.2021.3064464}}
-</code>
+```
 
 
 
