@@ -14,7 +14,7 @@ We recommend using a virtual environment and installing `./core-modules` after a
 $ pip install -e ./core-modules
 ```
 
-The folder `projects/genSFDI` contains all necessary elements 
+The folder `projects/genSFDI` contains a series of examples and tutorials to train and use the models shown in the article. However, if you have any questions, or something doesn't work in the code, please feel free to contact us!
 
 A sequence of instructions are provided in `1_prepare_environment.sh` and `2_autoinstall_libs.sh`.
 
