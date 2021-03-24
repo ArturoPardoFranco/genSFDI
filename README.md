@@ -6,7 +6,7 @@ Code for [**'Modeling and synthesis of breast cancer SFDI scatter signatures wit
 
 ## Installation, requirements
 
-Requirements are specified in `./requirements.txt`. TensorFlow 1.14 or above is required; we use the version provided by nvidia, i.e. [`nvidia-tensorflow[horovod]`](https://github.com/NVIDIA/tensorflow).
+Requirements are specified in `./requirements.txt`. TensorFlow 1.14 or above is required; we use the version provided by nVidia, i.e. [`nvidia-tensorflow[horovod]`](https://github.com/NVIDIA/tensorflow).
 
 We recommend using a virtual environment and installing `./core-modules` after all requirements are met, with 
 
@@ -29,9 +29,16 @@ in a Python/IPython console that allows `matplotlib` figures to pop up and updat
 This first commit includes all networks used in the manuscript, properly documented and with stand-alone simulations on the MNIST dataset. 
 
 * Individual networks can be tested as a standalone scripts.
-* Optical properties extraction with a neural LUT in both diffuse and subdiffuse regimes have been included.
+* Optical properties extraction with a neural LUT in both diffuse and subdiffuse regimes have been included. A training schedule is given in `./projects/gensfdi/compute/train_op_estimator.py` and a demonstrator is provided at `./projects/gensfdi/plotting/show_op_extraction.py`.
 * Older autoencoders are located in `./core-modules/ai/other_nets/`.
 * Functions for combining diffuse and subdiffuse-regime functions are provided in `./core-modules/utils/sfdi`.
+
+A final version of this code will include:
+* Pretrained models for MNIST and CIFAR-10
+* Training schedules used for these models
+* Demonstrators of the essential operations allowed by the z-clamped convolutional InfoVAE.
+
+Due to compute limitations, this may unfortunately take a few days. 
 
 ### Update -- March 10, 2021
 We are happy to announce that the manuscript was accepted! As shown in the article, we cannot provide patient data. To compensate for that, we will prepare ad-hoc experiments for the MNIST and CIFAR-10 datasets. We're currently preparing code and uploading it here, hopefully in the coming days. 
