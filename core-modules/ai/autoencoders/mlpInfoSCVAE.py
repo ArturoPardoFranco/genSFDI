@@ -270,7 +270,6 @@ class MLPInfoSCVAE:
     start = common.start
 
     # Universal functions:
-    lr_finder = common.standard_ae_lrf
     compute_mmd = common.compute_mmd
     compute_kernel = common.compute_kernel
     define_loss = common.mlp_infovae_loss                           # Loss function(s) for InfoVAE autoencoders

@@ -296,6 +296,359 @@ def train_convolutional_ae(self, training_data, training_sched, show=1, savefram
     # If we are here we have finished training, delete last cycle if early stopping has ocurred.
     self.load_model()
 
+''' Convolutional VAE + GCN function + throttle at bottleneck '''
+def train_convolutional_aegan_with_gating_parallel(self, training_data, training_sched, show=1, saveframes=0):
+    '''
+    Performs a sequence of SGD training examples with a given training_schedule
+    :param Xdata: Input data. Must be (dimensions x samples) and not the other way around.
+    :param training_sched: Training schedule. Dict with fields below.
+    :return:
+    '''
+
+    # First, store the current timestamp
+    now = datetime.now()
+    ts = now.strftime("%Y_%m_%d_%H_%M_%S")
+
+    ''' Training data dict '''
+    X_train = training_data['X_train']      # Inputs (train)
+    Y_train = training_data['Y_train']      # One-hot encoded categories (ideal softmax output)
+    y_train = training_data['y_train']      # Integer class numbers (0--nclasses)
+
+    X_test = training_data['X_test']        # Inputs (test)
+    Y_test = training_data['Y_test']        # One-hot encoded categories (ideal softmax output)
+    y_test = training_data['y_test']        # Integer class numbers (0--nclasses)
+
+    # 'clr' for Cyclic Learning Rates, 'normal' for Typical training, 'ocp' for One Cycle Policy
+    mode = training_sched['mode']  # Training modality
+
+    # Learning criterion: 'acc' for Accuracy, 'mse' for Mean Squared Error, 'none' means never stop.
+    stop_criterion = training_sched['stop_criterion']
+
+    # Evaluation time criterion: 'epoch' for evaluating at the end of the epoch, 'iter' for check every T iterations
+    eval_criterion = training_sched['eval_criterion']
+
+    max_patience = training_sched['max_patience']   # Patience (for validation purposes only).
+    dropout = training_sched['dropout_rate']        # Dropout rate (keep_prob = 0.8 is good enough)
+    eval_size = training_sched['eval_size']         # Size for evaluating train/test set
+
+    # Prepare learning rate plan and timestamp list
+    lr_plan = np.array([])
+    timestamps = []
+
+    if mode == 'clr':
+        lr_max = training_sched['lr_max']  # Maximum training step. Peak cycle value.
+        lr_min = training_sched['lr_min']  # Minimum training step. Happens at the beginning and end of each cycle.
+        T = training_sched['T']  # Cycle period
+        beta_start = training_sched['beta_start']  # Beta-VAE warmup start value
+        beta_end = training_sched['beta_end']  # Beta-VAE warmup end value
+        Nwarmup = training_sched['Nwarmup']  # Warmup period
+        Ncycles = training_sched['Ncycles']  # Number of cycles in total.
+        mult = training_sched['mult']  # Multiplier for cycle length at t+1
+        mult0 = 1.0
+
+        for k in range(1, Ncycles + 1):
+            # Generate learning cycle
+            lr_T = np.linspace(lr_min, lr_max, int(mult0 * T / 2))
+            lr_T_ = np.linspace(lr_max, lr_min, int(mult0 * T / 2))
+            lr_plan = np.concatenate((lr_plan, lr_T, lr_T_), axis=0)
+
+            # End of cycle should be included
+            timestamps.append(int(T * mult0))
+            mult0 *= mult
+
+        timestamps = np.cumsum(timestamps)
+
+        # Beta-values are also calculated here
+        beta_plan = np.linspace(beta_start, beta_end, Nwarmup)
+        beta_plan = np.concatenate((beta_plan, np.repeat(beta_end, T * Ncycles - Nwarmup)))
+
+    else:
+        if mode == 'normal':
+            lr_start = training_sched['lr_start']  # Initial learning rate
+            lr_end = training_sched['lr_end']  # Final learning rate
+            beta_start = training_sched['beta_start']  # Beta-VAE warmup start value
+            beta_end = training_sched['beta_end']  # Beta-VAE warmup end value
+            Nwarmup = training_sched['Nwarmup']  # Warmup period
+            Niters = training_sched['Niters']  # Number of iterations
+            T = training_sched['T']  # Verification period
+
+            # Timestamping occurs every T iterations
+            n_periods = int(np.ceil(Niters / T))
+            for k in range(1, n_periods):
+                timestamps.append(k * T)
+
+            # The learning rate plan in the standard case is a lot simpler.
+            lr_plan = np.linspace(lr_start, lr_end, Niters)
+
+            # The KL divergence influence value (beta-VAE) is also simple here!
+            beta_plan = np.linspace(beta_start, beta_end, Nwarmup)
+            beta_plan = np.concatenate((beta_plan, np.repeat(beta_end, Niters - Nwarmup)))
+
+        else:
+            if mode == 'ocp':
+                lr_min = training_sched['lr_min']  # Minimum learning rate
+                lr_max = training_sched['lr_max']  # Maximum learning rate
+                Niters = training_sched['Niters']  # Number of iterations
+                Nwarm = training_sched['Nwarm']  # Warmup iterations
+                Ncool = training_sched['Ncool']  # Cooldown iterations
+                T = training_sched['T']  # Check every T steps
+
+                # Timestamping occurs every T iterations
+                n_periods = int(np.ceil(Niters / T))
+                for k in range(1, n_periods):
+                    timestamps.append(k * T)
+
+                # The learning rate plan is as follows:
+                lr_w = np.linspace(lr_min, lr_max, Nwarm)
+                lr_0 = np.repeat(lr_max, Niters - Nwarm - Ncool, axis=0)
+                lr_c = np.linspace(lr_max, lr_min, Ncool)
+
+                lr_plan = np.concatenate((lr_w, lr_0, lr_c), axis=0)
+                print('lr_plan is ' + str(np.shape(lr_plan)))
+
+                # The KL divergence influence value (beta-VAE) is also simple here!
+                beta_start = training_sched['beta_start']  # Beta-VAE warmup start value
+                beta_end = training_sched['beta_end']  # Beta-VAE warmup end value
+                Nwarmup = training_sched['Nwarmup']  # Warmup period
+                beta_plan = np.linspace(beta_start, beta_end, Nwarmup)
+                beta_plan = np.concatenate((beta_plan, np.repeat(beta_end, Niters - Nwarmup)))
+
+
+
+            else:
+                print('(!) No established training policy ')
+
+    print('lr_plan is ' + str(np.shape(lr_plan)))
+    print('timestamps are ' + str(timestamps))
+
+    # Throttling sequences
+    # The following creates independent codes and stop gradient flags
+    # to enable ICA-like learning codes.
+    if 'm_t' in training_sched:
+        self.m_t = training_sched['m_t']
+    else:
+        self.m_t = 1
+
+    codes = []
+    stopgrad = []
+    N = int(np.round(self.n_z / self.m_t))
+    for k in range(1, N):
+        codes.append(np.concatenate((np.ones(k * self.m_t), np.zeros(self.n_z - k * self.m_t)), axis=0))
+        stopgrad.append(np.concatenate((np.zeros((k - 1) * self.m_t),
+                                        np.ones(self.m_t),
+                                        np.zeros(self.n_z - k * self.m_t)
+                                        ), axis=0))
+    codes.append(np.ones(self.n_z))
+    stopgrad.append(np.concatenate((np.zeros(self.n_z - self.m_t), np.ones(self.m_t)), axis=0))
+
+    codes = np.asarray(codes)
+    stopgrad = np.asarray(stopgrad)
+
+    # Number of epochs (useful later)
+    Ne = np.size(lr_plan)
+
+    # Noise injection plan
+    eps_start = training_sched['eps_start']  # Noise injection, initial variance
+    eps_end = training_sched['eps_end']  # Noise injection, final variance
+    eps_plan = np.linspace(eps_start, eps_end, len(lr_plan))
+
+    #lr_plan = lr_plan*np.random.rand(np.size(lr_plan))
+    #beta_plan = beta_plan*np.random.rand(np.size(beta_plan))*2
+
+    # Prepare the skip sizes for evaluation
+    skip_train = int(np.max([np.round(X_train.shape[0] / eval_size), 1]))
+    skip_test = int(np.max([np.round(X_test.shape[0] / eval_size), 1]))
+
+    # Start feeding the input pipeline
+    self.sess.run(self.iterator.initializer, feed_dict={self.placeholder_X:X_train})
+
+    # Training error
+    E = []
+    # Validation error and patience
+    vE = []
+    # Discriminator error
+    dE = []
+
+
+    # Plot some things if that's what the user wants.
+    # We can only plot learning curves and cloud shape.
+    if show == 1:
+        plt.rc('text', usetex=False)
+        fig10 = plt.figure(10, figsize=(15, 6))
+        fig10.clf()
+        ax101 = fig10.add_subplot(1, 2, 1)
+        ax101b = ax101.twinx()
+        ax102 = fig10.add_subplot(1, 2, 2)
+
+        # First curves are typical train/test errors
+        ax101.clear()
+        ax101b.clear()
+        curve_E, = ax101.semilogy(E, color='g', linestyle='--', label='Training error', alpha=0.6, )
+        curve_vE, = ax101.semilogy(vE, color='g', label='Validation error', alpha=0.6)
+        curve_dE, = ax101b.semilogy(dE, color='k', label='Discriminator error', alpha=0.6)
+        ax101.legend()
+        ax101b.legend()
+
+        # Second plot is a scatter plot
+        scatter_z = ax102.scatter(np.random.randn(10), np.random.randn(10), 30,
+                                  marker='.', edgecolor='none', alpha=0.6)
+
+        # Other internal functions will be called with
+        self.first_map = 1
+        self.first_recon = 1
+
+        plt.ion()
+
+    self.dE = 0
+    patience = 0
+    for t in tqdm(range(0, Ne), mininterval=1):
+        epoch_det = 0       # Epoch detection. Is zero unless t in timestamps if the condition is right.
+        try:
+            # code_choice = int(np.random.randint(0, codes.shape[0]))
+            choices = np.random.randint(0, np.size(codes, 0), size=[self.mbs*2])
+            # code_choice = int(np.floor(np.random.rand(1)*codes.shape[0]))
+            discriminator_scenario = np.random.rand(1)
+
+            d_zthrot = codes[choices[:self.mbs], :].T
+            d_stopgrad = stopgrad[choices[:self.mbs], :].T
+
+            # Do discriminator for another batch
+            _, self.dE = self.sess.run([self.optimizer_Disc, self.Discloss],
+                                       feed_dict={self.learning_rate: lr_plan[t],
+                                                  self.dropout_rate_AE: 1.0,
+                                                  self.dropout_rate_Disc: dropout,
+                                                  self.eps_throttle: eps_plan[t],
+                                                  self.kl_weight: beta_plan[t],
+                                                  self.z_throt: d_zthrot,
+                                                  self.z_stopgrad: d_stopgrad})
+
+            d_zthrot = codes[choices[self.mbs:], :].T
+            d_stopgrad = stopgrad[choices[self.mbs:], :].T
+
+            # Do autoencoder for one batch
+            _, self.E, self.dE = self.sess.run([self.optimizer_AE, self.AEloss, self.Discloss], feed_dict={self.learning_rate: lr_plan[t],
+                                                                                   self.dropout_rate_AE: dropout,
+                                                                                   self.dropout_rate_Disc: 1.0,
+                                                                                   self.eps_throttle: eps_plan[t],
+                                                                                   self.kl_weight: beta_plan[t],
+                                                                                   self.z_throt: d_zthrot,
+                                                                                   self.z_stopgrad: d_stopgrad})
+
+
+        except tf.errors.OutOfRangeError:
+            # Re-feed the pipeline once it runs out of samples (constant learning)
+            self.sess.run(self.iterator.initializer,
+                          feed_dict={self.placeholder_X: X_train})
+            epoch_det = 1
+
+        if eval_criterion == 'iter':
+            eval_cond = (t in timestamps)
+        else:
+            eval_cond = epoch_det
+
+        if eval_cond == 1:
+            dE.append(np.copy(self.dE))
+
+            Xhat_train, z_train = self.output(X_train[::skip_train, :, :, :])
+            E_curr = np.mean((Xhat_train - X_train[::skip_train, :, :, :]) **2 )
+            E.append(E_curr)
+
+            Xhat_test, z_test = self.output(X_test[::skip_test, :, :, :])
+            vE_curr = np.mean((Xhat_test - X_test[::skip_test, :, :, :]) ** 2)
+            vE.append(vE_curr)
+
+            '''
+            Storage of learning data (at validation) 
+            * If network is new, then create file with writing privileges and include data
+            * If network is old, then open file with read/write privileges and append data
+            '''
+            if self.first_iter == 1:
+                self.first_iter = 0
+                with open(self.write_path + '/errors/data_' + self.name + '_' +  ts + '.csv',
+                          'w') as file:
+                    writer = csv.writer(file)
+                    writer.writerow([t, E[-1], vE[-1]])
+            else:
+                with open(self.write_path + '/errors/data_' + self.name + '_' +   ts + '.csv',
+                          'a') as file:
+                    writer = csv.writer(file)
+                    writer.writerow([t, E[-1], vE[-1]])
+
+            '''
+            Plotting results (if desired)
+            For a feedforward network, we can only show the training and validation errors. 
+            '''
+            if show == 1:
+                tv = np.arange(0, len(E))
+                curve_E.set_data(tv, np.asarray(E))
+                curve_vE.set_data(tv, np.asarray(vE))
+                curve_dE.set_data(tv, np.asarray(dE))
+
+                ax101.relim()
+                ax101b.relim()
+                ax101.autoscale_view(True, True, True)
+                ax101b.autoscale_view(True, True, True)
+
+                scatter_z.set_offsets(z_train[0:2, :].T)
+                scatter_z.set_array(np.squeeze(y_train[::skip_train]))
+
+                ax102.ignore_existing_data_limits = True
+                ax102.update_datalim(scatter_z.get_datalim(ax102.transData))
+                ax102.autoscale_view()
+                #ax102.set_xlim(left=-3, right=3)
+                #ax102.set_ylim(bottom=-3, top=3)
+
+                fig10.canvas.draw()
+                fig10.canvas.flush_events()
+
+                self.show_map()
+                self.show_reconstructions(X_test[::skip_test, :, :, :])
+
+                if saveframes == 1:
+                    plt.figure(10)
+                    plt.savefig(self.framesfolder + '/learning_' + ts + '_' + str(t).zfill(20) + '.png', dpi=200,
+                                quality=100)
+                    plt.figure(30)
+                    plt.savefig(self.reconframesfolder + '/learning_' + ts + '_' + str(t).zfill(20) + '.png', dpi=200,
+                                quality=100)
+
+
+        if len(vE) >= 2 and eval_cond == 1:
+            '''
+            Early stopping implementation
+            Uses stored validation tests and verifies if the system has already learned enough
+            '''
+
+            # The model stops depending on the selected criterion!
+            if stop_criterion == 'mse':
+                cond = (vE[-1] > np.min(vE))            # If error isn't better than the best
+            if stop_criterion == 'none':
+                cond = False                            # Nothing really matters, never stop!
+
+            if cond == True:
+                patience += 1
+                if patience > max_patience:
+                    # Time's up!
+                    print('(!) Early stopping: vE[-1] = ' + str(vE[-1]) + ' > vE[-2] = ' + str(vE[-2]))
+                    break
+            else:
+                # Restart the patience counter
+                patience = 0
+                # Save current model build
+                self.save_model()
+
+            print('Error: ' + str(np.round(vE[-1], 4)) + ', patience = ' + str(patience))
+
+    plt.figure(10)
+    plt.savefig(self.write_path + '/last_learning_' + ts + '.png', dpi=200, quality=100)
+    plt.figure(20)
+    plt.savefig(self.write_path + '/last_random_' + ts + '.png', dpi=200, quality=100)
+    plt.figure(30)
+    plt.savefig(self.write_path + '/last_recon_' + ts + '.png', dpi=200, quality=100)
+
+    # If we are here we have finished training, delete last cycle if early stopping has ocurred.
+    self.load_model()
+
 ''' Module for training an LSGAN '''
 def gan_train(self, training_data, training_sched, show=1, saveframes=0):
     '''
@@ -863,3 +1216,303 @@ def train_mlp(self, training_data, training_sched, show = 1, saveframes=0):
     # Not much is needed except the final precision
     plt.figure(10)
     plt.savefig(self.write_path + '/last_learning_' + ts + '.png', dpi=200, quality=100)
+
+''' Module for training a multilayer perceptron autoencoder '''
+def train_mlp_ae(self, training_data, training_sched, show=1, saveframes=0, input_noise=0):
+    '''
+    Performs a sequence of SGD training examples with a given training_schedule
+    :param Xdata: Input data. Must be (dimensions x samples) and not the other way around.
+    :param training_sched: Training schedule. Dict with fields below.
+    :return:
+    '''
+
+    # First, store the current timestamp
+    now = datetime.now()
+    ts = now.strftime("%Y_%m_%d_%H_%M_%S")
+
+    ''' Training data dict '''
+    X_train = training_data['X_train']  # Inputs (train)
+    Y_train = training_data['Y_train']  # One-hot encoded categories (ideal softmax output)
+    y_train = training_data['y_train']  # Integer class numbers (0--nclasses)
+
+    X_test = training_data['X_test']  # Inputs (test)
+    Y_test = training_data['Y_test']  # One-hot encoded categories (ideal softmax output)
+    y_test = training_data['y_test']  # Integer class numbers (0--nclasses)
+
+    # 'clr' for Cyclic Learning Rates, 'normal' for Typical training, 'ocp' for One Cycle Policy
+    mode = training_sched['mode']  # Training modality
+
+    # Learning criterion: 'acc' for Accuracy, 'mse' for Mean Squared Error, 'none' means never stop.
+    stop_criterion = training_sched['stop_criterion']
+
+    # Evaluation time criterion: 'epoch' for evaluating at the end of the epoch, 'iter' for check every T iterations
+    eval_criterion = training_sched['eval_criterion']
+
+    # Other params
+    max_patience = training_sched['max_patience']   # Patience (for validation purposes only).
+    dropout = training_sched['dropout_rate']        # Dropout rate (keep_prob = 0.8 is good enough)
+    eval_size = training_sched['eval_size']         # Size for evaluating train/test set
+
+    # Prepare learning rate plan and timestamp list
+    lr_plan = np.array([])
+    timestamps = []
+
+    if mode == 'clr':
+        lr_max = training_sched['lr_max']               # Maximum training step. Peak cycle value.
+        lr_min = training_sched['lr_min']               # Minimum training step. Happens at the beginning and end of each cycle.
+        T = training_sched['T']                         # Cycle period
+        beta_start = training_sched['beta_start']       # Beta-VAE warmup start value
+        beta_end = training_sched['beta_end']           # Beta-VAE warmup end value
+        Nwarmup = training_sched['Nwarmup']             # Warmup period
+        Ncycles = training_sched['Ncycles']             # Number of cycles in total.
+        mult = training_sched['mult']                   # Multiplier for cycle length at t+1
+        mult0 = 1.0
+
+        for k in range(1, Ncycles + 1):
+            # Generate learning cycle
+            lr_T = np.linspace(lr_min, lr_max, int(mult0 * T / 2))
+            lr_T_ = np.linspace(lr_max, lr_min, int(mult0 * T / 2))
+            lr_plan = np.concatenate((lr_plan, lr_T, lr_T_), axis=0)
+
+            # End of cycle should be included
+            timestamps.append(int(T * mult0))
+            mult0 *= mult
+
+        timestamps = np.cumsum(timestamps)
+
+        # Beta-values are also calculated here
+        beta_plan = np.linspace(beta_start, beta_end, Nwarmup)
+        beta_plan = np.concatenate((beta_plan, np.repeat(beta_end, T * Ncycles - Nwarmup)))
+
+    else:
+        if mode == 'normal':
+            lr_start = training_sched['lr_start']           # Initial learning rate
+            lr_end = training_sched['lr_end']               # Final learning rate
+            beta_start = training_sched['beta_start']       # Beta-VAE warmup start value
+            beta_end = training_sched['beta_end']           # Beta-VAE warmup end value
+            Nwarmup = training_sched['Nwarmup']             # Warmup period
+            Niters = training_sched['Niters']               # Number of iterations
+            T = training_sched['T']                         # Verification period
+
+            # Timestamping occurs every T iterations
+            n_periods = int(np.ceil(Niters / T))
+            for k in range(1, n_periods):
+                timestamps.append(k * T)
+
+            # The learning rate plan in the standard case is a lot simpler.
+            lr_plan = np.linspace(lr_start, lr_end, Niters)
+
+            # The KL divergence influence value (beta-VAE) is also simple here!
+            beta_plan = np.linspace(beta_start, beta_end, Nwarmup)
+            beta_plan = np.concatenate((beta_plan, np.repeat(beta_end, Niters - Nwarmup)))
+
+        else:
+            if mode == 'ocp':
+                lr_min = training_sched['lr_min']  # Minimum learning rate
+                lr_max = training_sched['lr_max']  # Maximum learning rate
+                Niters = training_sched['Niters']  # Number of iterations
+                Nwarm = training_sched['Nwarm']  # Warmup iterations
+                Ncool = training_sched['Ncool']  # Cooldown iterations
+                T = training_sched['T']  # Check every T steps
+
+                # Timestamping occurs every T iterations
+                n_periods = int(np.ceil(Niters / T))
+                for k in range(1, n_periods):
+                    timestamps.append(k * T)
+
+                # The learning rate plan is as follows:
+                lr_w = np.linspace(lr_min, lr_max, Nwarm)
+                lr_0 = np.repeat(lr_max, Niters - Nwarm - Ncool, axis=0)
+                lr_c = np.linspace(lr_max, lr_min, Ncool)
+
+                lr_plan = np.concatenate((lr_w, lr_0, lr_c), axis=0)
+                # lr_plan *= np.random.rand(np.size(lr_plan)) # Random + dropout
+                print('lr_plan is ' + str(np.shape(lr_plan)))
+
+                # The KL divergence influence value (beta-VAE) is also simple here!
+                beta_start = training_sched['beta_start']  # Beta-VAE warmup start value
+                beta_end = training_sched['beta_end']  # Beta-VAE warmup end value
+                Nwarmup = training_sched['Nwarmup']  # Warmup period
+                beta_plan = np.linspace(beta_start, beta_end, Nwarmup)
+                beta_plan = np.concatenate((beta_plan, np.repeat(beta_end, Niters - Nwarmup)))
+
+
+            else:
+                print('(!) No established training policy ')
+
+    print('lr_plan is ' + str(np.shape(lr_plan)))
+    print('timestamps are ' + str(timestamps))
+
+    Ne = np.size(lr_plan)
+    # lr_plan = np.random.rand(Ne)*lr_max
+    # lr_plan *= np.random.rand(Ne)
+
+    # Prepare the skip sizes for evaluation
+    skip_train = int(np.max([np.round(X_train.shape[1] / eval_size), 1]))
+    skip_test = int(np.max([np.round(X_test.shape[1] / eval_size), 1]))
+
+    # Start feeding the input pipeline
+    self.sess.run(self.iterator.initializer, feed_dict={self.placeholder_X: X_train})
+    print('Initialized placeholders.')
+
+    # Training error
+    E = []
+    # Validation error and patience
+    vE = []
+
+    # Plot some things if that's what the user wants.
+    # We can only plot learning curves and cloud shape.
+    if show == 1:
+        fig10 = plt.figure(10, figsize=(15, 6))
+
+        fig10.clf()
+        ax101 = fig10.add_subplot(2, 2, 1)
+        ax103 = fig10.add_subplot(2, 2, 3)
+        ax102 = fig10.add_subplot(1, 2, 2)
+
+        # First curves are typical train/test errors
+        ax101.clear()
+        curve_E, = ax101.semilogy(E, color='g', linestyle='--', label='Training error', alpha=0.6, )
+        curve_vE, = ax101.semilogy(vE, color='g', label='Validation error', alpha=0.6)
+        ax101.legend()
+
+        # Second plot is a scatter plot
+        scatter_z = ax102.scatter(np.random.randn(10), np.random.randn(10), 30,
+                                  marker='.', edgecolor='none', alpha=0.6)
+
+        # Other internal functions will be called with
+        self.first_map = 1
+        self.first_recon = 1
+
+        plt.ion()
+        print('Graphs ready.')
+
+    patience = 0
+    for t in tqdm(range(0, Ne)):
+        epoch_det = 0  # Epoch detection. Is zero unless t in timestamps if the condition is right.
+        try:
+            epsval = 1.0
+            _, self.E, self.KLlast = self.sess.run([self.optimizer, self.loss, self.KLdivergence],
+                                                   feed_dict={self.learning_rate: lr_plan[t],
+                                                              self.dropout_rate: dropout,
+                                                              self.eps_throttle: epsval,
+                                                              self.kl_weight: beta_plan[t]})
+
+        except tf.errors.OutOfRangeError:
+            # Re-feed the pipeline once it runs out of samples (constant learning)
+            self.sess.run(self.iterator.initializer,
+                          feed_dict={self.placeholder_X: X_train})
+            epoch_det = 1
+
+        if eval_criterion == 'iter':
+            eval_cond = (t in timestamps)
+        else:
+            eval_cond = epoch_det
+
+        if eval_cond == 1:
+
+            Xhat_train, z_train = self.output(X_train[:, ::skip_train], eps_throttle=0)
+            E_curr = np.mean((Xhat_train - X_train[:, ::skip_train]) ** 2)
+            E.append(E_curr)
+
+            Xhat_test, z_test = self.output(X_test[:, ::skip_test], eps_throttle=0)
+            vE_curr = np.mean((Xhat_test - X_test[:, ::skip_test]) ** 2)
+            vE.append(vE_curr)
+            self.maxnorm = np.std(z_test)
+
+            '''
+            Storage of learning data (at validation) 
+            * If network is new, then create file with writing privileges and include data
+            * If network is old, then open file with read/write privileges and append data
+            '''
+            if self.first_iter == 1:
+                self.first_iter = 0
+                with open(self.write_path + '/errors/data_' + self.name + '_' + ts + '.csv',
+                          'w') as file:
+                    writer = csv.writer(file)
+                    writer.writerow([t, E[-1], vE[-1]])
+            else:
+                with open(self.write_path + '/errors/data_' + self.name + '_' + ts + '.csv',
+                          'a') as file:
+                    writer = csv.writer(file)
+                    writer.writerow([t, E[-1], vE[-1]])
+
+            '''
+            Plotting results (if desired)
+            For a feedforward network, we can only show the training and validation errors. 
+            '''
+            if show == 1:
+                tv = np.arange(0, len(E))
+                curve_E.set_data(tv, np.asarray(E))
+                curve_vE.set_data(tv, np.asarray(vE))
+
+                ax101.relim()
+                ax101.autoscale_view(True, True, True)
+
+                ax103.clear()
+                ax103.hist(np.ndarray.flatten(X_train[:, ::skip_train]), bins=50, density=True, alpha=0.5, label='X')
+                ax103.hist(np.ndarray.flatten(Xhat_train), bins=50, density=True, alpha=0.5, label='Xhat')
+                ax103.legend()
+
+                scatter_z.set_offsets(z_train[0:2, :].T)
+                scatter_z.set_array(np.squeeze(y_train[::skip_train]))
+
+                ax102.ignore_existing_data_limits = True
+                ax102.update_datalim(scatter_z.get_datalim(ax102.transData))
+                ax102.autoscale_view()
+
+                fig10.canvas.draw()
+                fig10.canvas.flush_events()
+
+                self.show_map()
+                self.show_reconstructions(X_test[:, ::skip_test])
+
+                if saveframes == 1:
+                    plt.figure(10)
+                    plt.savefig(self.framesfolder + '/learning_' + ts + '_' + str(t).zfill(20) + '.png', dpi=200,
+                                quality=100)
+                    plt.figure(30)
+                    plt.savefig(self.reconframesfolder + '/learning_' + ts + '_' + str(t).zfill(20) + '.png', dpi=200,
+                                quality=100)
+
+            del (Xhat_train)
+            del (Xhat_test)
+        if len(vE) >= 2 and eval_cond == 1:
+
+            '''
+            Early stopping implementation
+            Uses stored validation tests and verifies if the system has already learned enough
+            '''
+
+            # The model stops depending on the selected criterion!
+            if stop_criterion == 'mse':
+                cond = (vE[-1] > np.min(vE))  # If error isn't better than the best
+            if stop_criterion == 'none':
+                cond = False  # Nothing really matters, never stop!
+
+            if cond == True:
+                patience += 1
+                if patience > max_patience:
+                    # Time's up!
+                    print('(!) Early stopping: vE[-1] = ' + str(vE[-1]) + ' > vE[-2] = ' + str(np.min(vE)))
+                    break
+
+            else:
+                # Restart the patience counter
+                patience = 0
+                # Save current model build
+                self.save_model()
+
+            print('Error: ' + str(np.round(vE[-1], 4)) + ', patience = ' + str(patience) + \
+                  ', KL = ' + str(self.KLlast) + ', z_std = ' + str(self.maxnorm))
+
+    plt.figure(10)
+    plt.savefig(self.write_path + '/last_learning_' + ts + '.png', dpi=200, quality=100)
+    plt.figure(20)
+    plt.savefig(self.write_path + '/last_random_' + ts + '.png', dpi=200, quality=100)
+    plt.figure(30)
+    plt.savefig(self.write_path + '/last_recon_' + ts + '.png', dpi=200, quality=100)
+
+    # If we are here we have finished training, delete last cycle if early stopping has ocurred.
+    self.load_model()
+

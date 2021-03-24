@@ -724,7 +724,6 @@ class ConvolutionalInfoSCVAE_GCN_gated_encoded:
     compute_mmd = common.compute_mmd
     define_loss = common.conv_infovaegan_loss
 
-    lr_finder = common.mlp_aegan_gated_lrf                              # Learning rate finder (testing)
     train = common.train_convolutional_aegan_with_gating_parallel       # Training funcstions
     output = common.output_conv_ae_with_gating                          # similar to Torch's forward(x). Generates xhat, z
     show_reconstructions = common.show_reconstructions_conv_ae          # Small demonstrator, shows reconstructions.

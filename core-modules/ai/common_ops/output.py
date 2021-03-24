@@ -15,6 +15,59 @@ Output functions provide the output values in the graph given a set of input val
 Similar to forward(x) in a Torch module.
 '''
 
+
+# Output function for a multilayer autoencoder: returns z, xhat
+def output_mlp_ae(self, x, klweight=1, batchSize = 64, quiet_progress=1, eps_throttle=1.0, keep_prob=1.0):
+
+    niters = int(np.ceil(x.shape[1] / batchSize))
+
+    Xhat_ = self.Xhat.eval(session=self.sess, feed_dict={self.X: x[:, 0:batchSize],
+                                                        self.eps_throttle: eps_throttle,
+                                                        self.kl_weight: klweight,
+                                                        self.dropout_rate: keep_prob})
+
+    z_ = self.z.eval(session=self.sess, feed_dict={self.X: x[:, 0:batchSize],
+                                                  self.eps_throttle: eps_throttle,
+                                                  self.kl_weight: klweight,
+                                                  self.dropout_rate: keep_prob})
+
+    Xhat = np.zeros([x.shape[0], x.shape[1]])
+    z = np.zeros([z_.shape[0], x.shape[1]])
+
+    Xhat[:, 0:batchSize] = np.copy(Xhat_)
+    z[:, 0:batchSize] = np.copy(z_)
+
+
+    if quiet_progress == 1:
+        for b in range(1, niters):
+            Xhat_ = self.Xhat.eval(session=self.sess, feed_dict={self.X: x[:, b * batchSize:(b + 1) * batchSize],
+                                                                 self.eps_throttle: eps_throttle,
+                                                                 self.kl_weight: klweight,
+                                                                 self.dropout_rate: keep_prob})
+
+            z_ = self.z.eval(session=self.sess, feed_dict={self.X: x[:, b * batchSize:(b + 1) * batchSize],
+                                                           self.eps_throttle: eps_throttle,
+                                                           self.kl_weight: klweight,
+                                                           self.dropout_rate: keep_prob})
+
+            Xhat[:, b * batchSize:(b + 1) * batchSize] = np.copy(Xhat_)
+            z[:, b * batchSize:(b + 1) * batchSize] = np.copy(z_)
+    else:
+        for b in tqdm(range(1, niters)):
+            Xhat_ = self.Xhat.eval(session=self.sess, feed_dict={self.X: x[:, b * batchSize:(b + 1) * batchSize],
+                                                                 self.eps_throttle: eps_throttle,
+                                                                 self.kl_weight: klweight,
+                                                                 self.dropout_rate: keep_prob})
+            z_ = self.z.eval(session=self.sess, feed_dict={self.X: x[:, b * batchSize:(b + 1) * batchSize],
+                                                           self.eps_throttle: eps_throttle,
+                                                           self.kl_weight: klweight,
+                                                           self.dropout_rate: keep_prob})
+
+            Xhat[:, b * batchSize:(b + 1) * batchSize] = np.copy(Xhat_)
+            z[:, b * batchSize:(b + 1) * batchSize] = np.copy(z_)
+
+    return Xhat, z
+
 # Output function for a convolutional autoencoder: returns z, xhat
 def output_conv_ae(self, x, klweight=1, batchSize=64, quiet_progress=1):
 
@@ -70,6 +123,77 @@ def output_conv_ae(self, x, klweight=1, batchSize=64, quiet_progress=1):
             z[:, b * batchSize:(b + 1) * batchSize] = np.copy(z_)
 
     # Xhat is the output of the AE, z is the bottleneck.
+    return Xhat, z
+
+# Output function for a convolutional autoencoder: returns z, xhat
+def output_conv_ae_with_gating(self, x, klweight=1, batchSize = 64, quiet_progress=1, z_throt=None, z_sgrad=None, do_throttle=0):
+
+    if do_throttle is 0:
+        z_throt = np.ones([self.n_z, 1])
+        z_stopgrad = np.zeros([self.n_z, 1])
+    else:
+        z_throt = z_throt
+        z_stopgrad = z_sgrad
+
+    # Work it!
+    niters = int(np.ceil(x.shape[0] / batchSize))
+
+
+    Xhat = self.Xhat.eval(session=self.sess, feed_dict={self.X: x[:batchSize, :, :, :],
+                                     self.eps_throttle: 1.0,
+                                     self.kl_weight: klweight,
+                                     self.dropout_rate: 1.0,
+                                                        self.z_throt: z_throt,
+                                                        self.z_stopgrad: z_stopgrad})
+
+    z = self.z.eval(session=self.sess, feed_dict={self.X: x[:batchSize, :, :, :],
+                               self.eps_throttle: 1.0,
+                               self.kl_weight: klweight,
+                               self.dropout_rate: 1.0,
+                                                        self.z_throt: z_throt,
+                                                        self.z_stopgrad: z_stopgrad})
+    if quiet_progress == 1:
+        for b in range(1, niters):
+
+            Xhat_ =  self.Xhat.eval(session=self.sess, feed_dict={self.X: x[b * batchSize:(b + 1) * batchSize, :, :, :],
+                                         self.eps_throttle: 1.0,
+                                         self.kl_weight: klweight,
+                                         self.dropout_rate: 1.0,
+                                                        self.z_throt: z_throt,
+                                                        self.z_stopgrad: z_stopgrad})
+
+            z_ = self.z.eval(session=self.sess, feed_dict={self.X: x[b * batchSize:(b + 1) * batchSize, :, :, :],
+                                   self.eps_throttle: 1.0,
+                                   self.kl_weight: klweight,
+                                   self.dropout_rate: 1.0,
+                                                        self.z_throt: z_throt,
+                                                        self.z_stopgrad: z_stopgrad})
+
+
+            Xhat = np.concatenate((Xhat, Xhat_), axis=0)
+            z = np.concatenate((z, z_), axis=1)
+    else:
+        for b in tqdm(range(1, niters)):
+
+            Xhat_ =  self.Xhat.eval(session=self.sess, feed_dict={self.X: x[b * batchSize:(b + 1) * batchSize, :, :, :],
+                                         self.eps_throttle: 1.0,
+                                         self.kl_weight: klweight,
+                                         self.dropout_rate: 1.0,
+                                                        self.z_throt: z_throt,
+                                                        self.z_stopgrad: z_stopgrad})
+
+            z_ = self.z.eval(session=self.sess, feed_dict={self.X: x[b * batchSize:(b + 1) * batchSize, :, :, :],
+                                   self.eps_throttle: 1.0,
+                                   self.kl_weight: klweight,
+                                   self.dropout_rate: 1.0,
+                                                        self.z_throt: z_throt,
+                                                        self.z_stopgrad: z_stopgrad})
+
+
+            Xhat = np.concatenate((Xhat, Xhat_), axis=0)
+            z = np.concatenate((z, z_), axis=1)
+
+
     return Xhat, z
 
 # Output for a general mlp
@@ -130,6 +254,41 @@ def interrogate_mlp(self, x, batchSize=64):
 '''
 Synthesis functions common to all autoencoders: produces Xhat (output) out of z (bottleneck).
 '''
+
+# Synthesize data for mlp autoencoder
+def synthesize_mlp(self, z, klweight=1, batchSize=64, quiet_progress=1):
+    # Assuming z is (n_z, ?) then we can just do as with output:
+    niters = int(np.ceil(z.shape[1] / batchSize))
+
+    Xhat_ = self.Xhat.eval(session=self.sess, feed_dict={self.z: z[:, 0:batchSize],
+                                                        self.eps_throttle: 0.0,
+                                                        self.kl_weight: klweight,
+                                                        self.dropout_rate: 1.0,
+                                                        self.learning_rate: 0.0})
+
+    Xhat = np.zeros([Xhat_.shape[0], z.shape[1]])
+    Xhat[:, 0:batchSize] = np.copy(Xhat_)
+
+    if quiet_progress == 1:
+        for b in range(1, niters):
+            Xhat_ = self.Xhat.eval(session=self.sess, feed_dict={self.z: z[:, b * batchSize:(b + 1) * batchSize],
+                                                                 self.eps_throttle: 0.0,
+                                                                 self.kl_weight: klweight,
+                                                                 self.dropout_rate: 1.0,
+                                                                 self.learning_rate: 0.0})
+
+            Xhat[:, b * batchSize:(b + 1) * batchSize] = np.copy(Xhat_)
+    else:
+        for b in tqdm(range(1, niters), desc='Synthesis'):
+            Xhat_ = self.Xhat.eval(session=self.sess, feed_dict={self.z: z[:, b * batchSize:(b + 1) * batchSize],
+                                                                 self.eps_throttle: 0.0,
+                                                                 self.kl_weight: klweight,
+                                                                 self.dropout_rate: 1.0,
+                                                                 self.learning_rate: 0.0})
+
+            Xhat[:, b * batchSize:(b + 1) * batchSize] = np.copy(Xhat_)
+
+    return Xhat
 
 # Synthesize data for conv autoencoder
 def synthesize_conv(self, z, klweight=1, batchSize = 64, quiet_progress=1):
@@ -206,6 +365,55 @@ def synthesize_mlpGAN(self, z, klweight=1, batchSize=64, quiet_progress=1):
 Common visualization tools/methods
 '''
 
+# Show reconstructions for multilayer autoencoder
+def show_reconstructions_mlp_ae(self, Xdata, nrows=4, ncols=20):
+
+    # Prepare a row with patch size
+    patchSize = int(np.ceil(np.sqrt(self.n_X)))
+
+    # Prepare a large picture
+    bigPic = np.zeros([patchSize * nrows * 2, patchSize * ncols])
+
+    if self.first_recon == 1:
+        # Produce a figure for later use
+        self.fig30 = plt.figure(30, figsize=(15, 5))
+        self.fig30.clf()
+        self.ax31 = self.fig30.add_subplot(1, 1, 1)
+        self.imshow_recon = self.ax31.imshow(bigPic, cmap='gray')
+        self.fig30.subplots_adjust(left=0.05, bottom=0.05, right=0.95, top=0.95)
+        self.ax31.set_xlabel('z1')
+        self.ax31.set_ylabel('z2')
+        plt.ion()
+        self.first_recon = 0
+
+    else:
+        # Get output data
+        Xhat, z = self.output(Xdata, eps_throttle=0.0)
+
+        # Always produce the same random data (for video representation purposes)
+        prng = np.random.RandomState(0)
+        for i in range(0, nrows):
+            # Get a subset of the data
+            kval = np.squeeze(prng.randint(0, np.size(Xdata, 1), ncols))
+            for j in range(0, ncols):
+                Xhat_ = np.zeros([patchSize, patchSize])
+                Xhat_ = np.reshape(Xhat_, (patchSize ** 2))
+                Xhat_[:self.X.shape[0]] = Xhat[:, int(kval[j])]
+                Xhat_ = np.reshape(Xhat_, (patchSize, patchSize))
+
+                X_ = np.zeros([patchSize, patchSize])
+                X_ = np.reshape(X_, (patchSize**2))
+                X_[:Xdata.shape[0]] = Xdata[:, int(kval[j])]
+                X_ = np.reshape(X_, (patchSize, patchSize))
+
+                bigPic[2 * i * patchSize:(2 * i + 1) * patchSize, j * patchSize:(j + 1) * patchSize] = X_
+                bigPic[(2 * i + 1) * patchSize:(2 * i + 2) * patchSize, j * patchSize:(j + 1) * patchSize] = Xhat_
+
+        self.imshow_recon.set_data(bigPic)
+        self.imshow_recon.autoscale()
+        self.fig30.canvas.draw()
+        self.fig30.canvas.flush_events()
+
 # Show reconstructions for convolutional autoencoder
 def show_reconstructions_conv_ae(self, Xdata, nrows=4, ncols=20):
 
@@ -246,6 +454,63 @@ def show_reconstructions_conv_ae(self, Xdata, nrows=4, ncols=20):
         self.imshow_recon.autoscale()
         self.fig30.canvas.draw()
         self.fig30.canvas.flush_events()
+
+# Show 2D map (mlp AE)
+def show_map_mlp(self, Ntest = 20, zspan=2.5, fig=None, ax=None):
+    '''
+    Generates a map of internal representations for the various positions in z-space.
+    :return: Figure with internal representation
+    '''
+
+    # Patch size will be the closest square root from above
+    patchSize = int(np.ceil(np.sqrt(self.n_X)))
+
+    zrange = np.linspace(-zspan, zspan, Ntest)
+    zy, zx = np.meshgrid(zrange, zrange)
+    BigPic = np.zeros([Ntest * patchSize, Ntest * patchSize])
+
+    if self.first_map == 1:
+        if fig == None:
+            self.fig20 = plt.figure(20, figsize=(10, 10))
+            self.fig20.clf()
+            self.ax11 = self.fig20.add_subplot(1, 1, 1)
+            self.imshow_map = self.ax11.imshow(np.flip(BigPic, axis=0), extent=(-zspan, zspan, -zspan, zspan), cmap='gray')
+            self.fig20.subplots_adjust(left=0.05, bottom=0.05, right=0.95, top=0.95)
+            self.ax11.set_xlabel('z1')
+            self.ax11.set_ylabel('z2')
+            self.first_map = 0
+        else:
+            self.imshow_map = self.ax.imshow(np.flip(BigPic, axis=0), extent=(-zspan, zspan, -zspan, zspan),
+                                               cmap='gray')
+            fig.subplots_adjust(left=0.05, bottom=0.05, right=0.95, top=0.95)
+            ax.set_xlabel('z1')
+            ax.set_ylabel('z2')
+
+    else:
+
+        for i in range(0, Ntest):
+            zgen = np.concatenate((zx[i, :][np.newaxis, :], zy[i, :][np.newaxis, :]), axis=0)
+            #print(np.shape(zgen))
+            # print(zgen)
+            if self.n_z > 2:
+                zgen = np.concatenate((zgen, np.zeros([self.n_z - 2, zgen.shape[1]])), axis=0)
+            #print(np.shape(zgen))
+
+            Xhat = self.synthesize(zgen)
+
+            # Xhat will be (X.shape[0], Ntest)
+            #print('Xhat is ' + str(np.shape(Xhat)))
+            for j in range(0, Ntest):
+                Xhat_ = np.zeros([patchSize, patchSize])
+                Xhat_ = np.reshape(Xhat_, (patchSize**2))
+                Xhat_[:self.X.shape[0]] = Xhat[:, j]
+                Xhat_ = np.reshape(Xhat_, (patchSize, patchSize))
+                BigPic[j * patchSize:(j + 1) * patchSize, i * patchSize:(i + 1) * patchSize] = np.flipud(Xhat_)
+
+        self.imshow_map.set_data(np.flipud(BigPic))
+        self.imshow_map.autoscale()
+        self.fig20.canvas.draw()
+        self.fig20.canvas.flush_events()
 
 # Show 2D map (convolutional AE)
 def show_map_conv(self, Ntest=20, zspan=2.5):
