@@ -1,0 +1,2 @@
+model_checkpoint_path: "mnist_gan_0000_model.ckpt"
+all_model_checkpoint_paths: "mnist_gan_0000_model.ckpt"
