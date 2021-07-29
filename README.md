@@ -6,7 +6,7 @@ Code for [**'Modeling and synthesis of breast cancer SFDI scatter signatures wit
 
 ## Installation, requirements
 
-Requirements are specified in `./requirements.txt`. TensorFlow 1.14 or above is required; we use the version provided by nVidia, i.e. [`nvidia-tensorflow[horovod]`](https://github.com/NVIDIA/tensorflow).
+Requirements are specified in `./requirements.txt`. TensorFlow 1.14 or above is required; we use the version provided by NVIDIA, i.e. [`nvidia-tensorflow[horovod]`](https://github.com/NVIDIA/tensorflow).
 
 We recommend using a virtual environment and installing `./core-modules` after all requirements are met, with 
 
@@ -52,7 +52,7 @@ We appreciate your patience!
 ![Some MNIST samples produced by the GAN-VAE-GAN architecture](./output/generated_samples_mnist.png)
 ![Some CIFAR-10 samples produced by the GAN-VAE-GAN architecture](./output/generated_samples_cifar.png)
 
-We finally had access to some free compute -- you will find pretrained models for you to experiment in `./output/networks`. I have laid out a few comments on the results for MNIST and CIFAR-10, in their corresponding scripts at `./projects/gensfdi/analysis`. In any case, if you have any problems installing or running the pretrained networks, let me know at `arturo.pardo@unican.es`.
+We finally had access to some free compute -- you will find pretrained models for you to experiment at `./output/networks`. I have laid out a few comments on the results for MNIST and CIFAR-10, in their corresponding scripts at `./projects/gensfdi/analysis`. In any case, if you have any problems installing or running the pretrained networks, let me know at `arturo.pardo@unican.es`.
 
 ## Cite this work! :)
 If you use this code or any of its modules, please cite us on your paper!
